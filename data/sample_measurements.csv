@@ -1,0 +1,6 @@
+sample_id,group,value,unit
+s001,control,12.4,mg
+s002,control,11.8,mg
+s003,treatment,18.9,mg
+s004,treatment,20.1,mg
+s005,treatment,19.4,mg

@@ -1,0 +1,36 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv/
+logs/
+.env
+.codex
+__pycache__/
+*.pyc
+airflow.db
+.DS_Store
+.pytest_cache/
+.ruff_cache/
+
+# Local Airflow generated config/state
+config/airflow.cfg
+captured_data/
+
+# Generated reproducibility packages
+reproducibility-package_*/
+reproducibility-package_*.tar.gz
+
+# Local project notes
+PROJECT_INFO.md
+project_plan.txt
+references.bib
+thesis.txt
+
+# Local tests
+tests/
