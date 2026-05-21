@@ -109,12 +109,11 @@ Capture a specific run:
 airflow-rocrate capture --dag-id my_dag --run-id <run_id>
 ```
 
-Extract a package:
+Inspect a package archive:
 
 ```bash
-airflow-rocrate extract \
-  --package reproducibility-package_my_dag_run.tar.gz \
-  --extract-to ./extracted
+tar -xzf reproducibility-package_my_dag_<run_id>.tar.gz
+cd reproducibility-package_my_dag_<run_id>
 ```
 
 Show CLI information:
@@ -192,16 +191,10 @@ Install dependencies:
 uv pip install -e ".[dev]"
 ```
 
-Run tests:
-
-```bash
-uv run pytest tests
-```
-
 Run linting:
 
 ```bash
-uv run ruff check src tests dags
+uv run ruff check src dags
 ```
 
 ## Main Source Files
@@ -241,4 +234,3 @@ Verified behavior includes:
 - task log inclusion
 - parallel task overlap metadata
 - XCom provenance parsing from JSON strings
-- package extraction

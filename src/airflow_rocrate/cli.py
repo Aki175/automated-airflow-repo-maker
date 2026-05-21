@@ -198,43 +198,6 @@ def list_runs(dag_id: str, db_url: Optional[str]):
 
 
 @cli.command()
-@click.option(
-    "--package",
-    type=click.Path(exists=True),
-    required=True,
-    help="Path to reproducibility package (.tar.gz)",
-)
-@click.option(
-    "--extract-to",
-    type=click.Path(),
-    default="./",
-    help="Directory to extract package to (default: current directory)",
-)
-def extract(package: str, extract_to: str):
-    """Extract a package created by this tool."""
-    click.echo("📦 Extracting reproducibility package...")
-    click.echo(f"   Package: {package}")
-    click.echo(f"   Extract to: {extract_to}")
-
-    try:
-        from airflow_rocrate import ReproducibilityPackager
-
-        packager = ReproducibilityPackager(extract_to)
-        extract_path = packager.extract_package(Path(package), Path(extract_to))
-
-        click.echo("\n Package extracted successfully!")
-        click.echo(f"    Location: {extract_path}")
-        click.echo("\n   Next steps:")
-        click.echo(f"   $ cd {extract_path}")
-        click.echo("   $ cat README.md")
-        click.echo("   $ airflow dags trigger <dag_id>")
-
-    except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
-        sys.exit(1)
-
-
-@cli.command()
 def info():
     """Show a short summary of the tool."""
     click.echo(f"""
@@ -257,7 +220,6 @@ Key Features
 Commands
   capture       Create reproducibility package from DAG run
   list-runs     List available DAG executions
-  extract       Extract and use reproducibility package
   info          Show this message
 
 Documentation

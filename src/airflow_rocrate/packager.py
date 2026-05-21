@@ -324,22 +324,6 @@ The original run metadata is stored in:
 
         return output_file
 
-    def extract_package(self, package_file: Path, extract_to: Optional[Path] = None) -> Path:
-        """Extract a tar.gz package."""
-        extract_to = Path(extract_to) if extract_to else Path.cwd()
-        extract_to.mkdir(parents=True, exist_ok=True)
-
-        if not str(package_file).endswith(".tar.gz"):
-            raise ValueError("Unsupported archive format; expected .tar.gz")
-
-        with tarfile.open(str(package_file), "r:gz") as tar:
-            tar.extractall(path=str(extract_to), filter="data")
-
-        extracted_dirs = list(extract_to.glob("reproducibility-package_*"))
-        if extracted_dirs:
-            return extracted_dirs[0]
-        return extract_to
-
     def _safe_name(self, value: str) -> str:
         """Create a safe piece of a file name."""
         return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(value)).strip("_") or "unknown"
