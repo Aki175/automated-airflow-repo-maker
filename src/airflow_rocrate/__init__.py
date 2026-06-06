@@ -7,6 +7,8 @@ __author__ = "Akbar"
 
 __all__ = [
     "AirflowMetadataCapture",
+    "build_coverage_report",
+    "coverage_report",
     "RocrateCrateGenerator",
     "ReproducibilityPackager",
 ]
@@ -21,6 +23,14 @@ def __getattr__(name):
         from airflow_rocrate.rocrate_generator import RocrateCrateGenerator
 
         return RocrateCrateGenerator
+    if name == "build_coverage_report":
+        from airflow_rocrate.evaluation import build_coverage_report
+
+        return build_coverage_report
+    if name == "coverage_report":
+        from airflow_rocrate.evaluation import coverage_report
+
+        return coverage_report
     if name == "ReproducibilityPackager":
         from airflow_rocrate.packager import ReproducibilityPackager
 

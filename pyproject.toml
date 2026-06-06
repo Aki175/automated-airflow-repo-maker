@@ -47,3 +47,6 @@ airflow-rocrate = "airflow_rocrate.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/airflow_rocrate"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

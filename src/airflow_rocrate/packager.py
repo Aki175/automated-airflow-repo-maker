@@ -15,6 +15,8 @@ from datetime import datetime
 import tarfile
 import tempfile
 
+from airflow_rocrate.evaluation import build_coverage_report
+
 
 class ReproducibilityPackager:
     """Collect package files and write the final archive."""
@@ -41,7 +43,7 @@ class ReproducibilityPackager:
             package_dir = Path(tmpdir) / package_name
             package_dir.mkdir(parents=True)
 
-            self._create_package_structure(package_dir, dag_id, run_id, metadata)
+            self._create_package_structure(package_dir)
 
             if rocrate_dir.exists():
                 metadata_file = rocrate_dir / "ro-crate-metadata.json"
@@ -69,25 +71,30 @@ class ReproducibilityPackager:
             self._create_environment_files(package_dir, metadata)
             self._create_experiment_setup_files(package_dir, dag_id, run_id, metadata)
 
-            self._create_readme(package_dir, dag_id, run_id, metadata, package_name)
+            coverage = build_coverage_report(package_dir, metadata, data_files)
+            self._create_manifest(package_dir, dag_id, run_id, metadata, coverage)
+            self._create_readme(package_dir, dag_id, run_id, metadata, package_name, coverage)
 
             output_package = self.base_output_dir / package_dir.name
             return self._create_tar_gz(package_dir, output_package)
 
-    def _create_package_structure(
-        self,
-        package_dir: Path,
-        dag_id: str,
-        run_id: str,
-        metadata: Dict[str, Any]
-    ):
-        """Create the folders and manifest used by the package."""
+    def _create_package_structure(self, package_dir: Path):
+        """Create the folders used by the package."""
         (package_dir / "data").mkdir(parents=True)
         (package_dir / "logs").mkdir(parents=True)
         (package_dir / "workflow").mkdir(parents=True)
         (package_dir / "environment").mkdir(parents=True)
         (package_dir / "experiment_setup").mkdir(parents=True)
 
+    def _create_manifest(
+        self,
+        package_dir: Path,
+        dag_id: str,
+        run_id: str,
+        metadata: Dict[str, Any],
+        coverage: Dict[str, Any],
+    ):
+        """Write a machine-readable package summary."""
         manifest = {
             "package_type": "airflow-rocrate",
             "version": "1.0",
@@ -95,6 +102,7 @@ class ReproducibilityPackager:
             "dag_id": dag_id,
             "run_id": run_id,
             "metadata": metadata,
+            "coverage": coverage,
         }
 
         manifest_file = package_dir / "MANIFEST.json"
@@ -108,10 +116,15 @@ class ReproducibilityPackager:
         run_id: str,
         metadata: Dict[str, Any],
         package_name: str,
+        coverage: Dict[str, Any],
     ):
         """Write the README that travels with the package."""
         dag_info = metadata.get("dag_info", {})
         capture_time = metadata.get("capture_timestamp", "Unknown")
+        coverage_score = coverage.get("score", 0)
+        coverage_percent = coverage.get("score_percent", 0)
+        coverage_total = coverage.get("total_score", 0)
+        coverage_items = coverage.get("total_items", 0)
 
         readme_content = f"""
 # Airflow DAG Reproducibility Package
@@ -131,6 +144,16 @@ prepare the correct environment and trigger the DAG again.
 - **Captured**: {capture_time}
 - **Owner**: {dag_info.get('owner', 'Unknown')}
 - **Description**: {dag_info.get('description', 'N/A')}
+
+## Capture Coverage
+
+- **Score**: {coverage_score} ({coverage_percent}%)
+- **Formula**: sum of evidence scores divided by number of evidence items
+- **Evidence points**: {coverage_total} / {coverage_items}
+
+Automatic evidence scores 1. Deployment-specific evidence, such as task logs or
+worker runtime files, scores 0.5 when it is available. Manual or unsupported
+evidence scores 0 because it was not discovered automatically.
 
 ## Package Contents
 
