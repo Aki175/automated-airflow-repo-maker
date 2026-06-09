@@ -1,7 +1,3 @@
-"""
-Tools for packaging Airflow DAG runs with RO-Crate metadata.
-"""
-
 __version__ = "0.1.0"
 __author__ = "Akbar"
 

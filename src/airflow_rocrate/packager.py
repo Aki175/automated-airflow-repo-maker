@@ -1,7 +1,3 @@
-"""
-Build the final archive for an Airflow reproducibility package.
-"""
-
 import shutil
 from importlib import metadata as importlib_metadata
 import json
@@ -19,10 +15,7 @@ from airflow_rocrate.evaluation import build_coverage_report
 
 
 class ReproducibilityPackager:
-    """Collect package files and write the final archive."""
-
     def __init__(self, base_output_dir: Optional[Path] = None):
-        """Choose where finished packages will be written."""
         self.base_output_dir = Path(base_output_dir) if base_output_dir else Path.cwd()
         self.base_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -36,7 +29,6 @@ class ReproducibilityPackager:
         data_files: Optional[List[Path]] = None,
         logs_dir: Optional[Path] = None,
     ) -> Path:
-        """Create a full package for one DAG run."""
         package_name = f"reproducibility-package_{self._safe_name(dag_id)}_{self._safe_name(run_id)}"
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -79,7 +71,6 @@ class ReproducibilityPackager:
             return self._create_tar_gz(package_dir, output_package)
 
     def _create_package_structure(self, package_dir: Path):
-        """Create the folders used by the package."""
         (package_dir / "data").mkdir(parents=True)
         (package_dir / "logs").mkdir(parents=True)
         (package_dir / "workflow").mkdir(parents=True)
@@ -94,7 +85,6 @@ class ReproducibilityPackager:
         metadata: Dict[str, Any],
         coverage: Dict[str, Any],
     ):
-        """Write a machine-readable package summary."""
         manifest = {
             "package_type": "airflow-rocrate",
             "version": "1.0",
@@ -118,8 +108,8 @@ class ReproducibilityPackager:
         package_name: str,
         coverage: Dict[str, Any],
     ):
-        """Write the README that travels with the package."""
         dag_info = metadata.get("dag_info", {})
+        dag_run = metadata.get("dag_run") or {}
         capture_time = metadata.get("capture_timestamp", "Unknown")
         coverage_score = coverage.get("score", 0)
         coverage_percent = coverage.get("score_percent", 0)
@@ -141,6 +131,10 @@ prepare the correct environment and trigger the DAG again.
 
 - **DAG ID**: {dag_id}
 - **Run ID**: {run_id}
+- **Run state**: {dag_run.get('state', 'Unknown')}
+- **Run logical date**: {dag_run.get('logical_date', 'Unknown')}
+- **Run started**: {dag_run.get('start_date', 'Unknown')}
+- **Run ended**: {dag_run.get('end_date', 'Unknown')}
 - **Captured**: {capture_time}
 - **Owner**: {dag_info.get('owner', 'Unknown')}
 - **Description**: {dag_info.get('description', 'N/A')}
@@ -249,7 +243,6 @@ This reproducibility package is provided as is for scientific purposes.
         package_dir: Path,
         metadata: Optional[Dict[str, Any]] = None,
     ):
-        """Write files that describe the software environment."""
         environment_dir = package_dir / "environment"
         requirements = self._project_requirements()
         (environment_dir / "requirements.txt").write_text("\n".join(requirements) + "\n")
@@ -297,7 +290,6 @@ COPY workflow/dags/ /opt/airflow/dags/
         run_id: str,
         metadata: Dict[str, Any],
     ):
-        """Write Airflow setup notes for the package."""
         setup_dir = package_dir / "experiment_setup"
         airflow_version = self._airflow_version(metadata)
         setup_notes = f"""# Airflow Experiment Setup
@@ -339,7 +331,6 @@ The original run metadata is stored in:
         (setup_dir / "airflow_setup.md").write_text(setup_notes)
 
     def _create_tar_gz(self, source_dir: Path, output_path: Path) -> Path:
-        """Create the tar.gz archive."""
         output_file = Path(str(output_path) + ".tar.gz")
 
         with tarfile.open(str(output_file), "w:gz") as tar:
@@ -348,11 +339,9 @@ The original run metadata is stored in:
         return output_file
 
     def _safe_name(self, value: str) -> str:
-        """Create a safe piece of a file name."""
         return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in str(value)).strip("_") or "unknown"
 
     def _project_requirements(self) -> List[str]:
-        """Read the project dependencies to include in the package."""
         pyproject = Path.cwd() / "pyproject.toml"
         if pyproject.exists():
             with open(pyproject, "rb") as f:
@@ -379,14 +368,12 @@ The original run metadata is stored in:
         ]
 
     def _installed_package_requirement(self, package_name: str) -> str:
-        """Pin a package version when it is installed locally."""
         try:
             return f"{package_name}=={importlib_metadata.version(package_name)}"
         except importlib_metadata.PackageNotFoundError:
             return package_name
 
     def _airflow_version(self, metadata: Optional[Dict[str, Any]]) -> str:
-        """Use the captured Airflow version when available."""
         if metadata and metadata.get("airflow_version"):
             return str(metadata["airflow_version"])
 
@@ -396,7 +383,6 @@ The original run metadata is stored in:
             return "unknown"
 
     def _capture_worker_environment(self, environment_dir: Path):
-        """Capture worker details when a Docker Compose worker is running."""
         docker_compose = Path.cwd() / "docker-compose.yaml"
         if not docker_compose.exists():
             return
@@ -437,7 +423,6 @@ The original run metadata is stored in:
         return None
 
     def _run_command(self, command: List[str], timeout: int) -> Dict[str, Any]:
-        """Run a command and return its output."""
         try:
             completed = subprocess.run(
                 command,

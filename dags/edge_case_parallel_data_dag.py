@@ -1,10 +1,3 @@
-"""
-Example DAG for testing parallel tasks and data capture.
-
-It creates several branches that can run at the same time, reads a sample CSV,
-returns file provenance through XCom, and leaves room for optional manual data.
-"""
-
 from __future__ import annotations
 
 import csv

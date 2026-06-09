@@ -1,10 +1,3 @@
-"""
-Branching DAG for reproducibility capture.
-
-This DAG intentionally creates skipped tasks so the package can show that a DAG
-run records both executed and skipped branches.
-"""
-
 from __future__ import annotations
 
 import os

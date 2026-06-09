@@ -1,6 +1,3 @@
-"""
-Super simple test DAG to verify Airflow installation
-"""
 from airflow import DAG
 from airflow.operators.bash import BashOperator
 from datetime import datetime

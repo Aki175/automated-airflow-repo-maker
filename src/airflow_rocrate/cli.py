@@ -1,7 +1,3 @@
-"""
-Command line entry points for building Airflow reproducibility packages.
-"""
-
 import click
 from pathlib import Path
 from typing import Any, Optional
@@ -19,7 +15,6 @@ DEFAULT_LOCAL_DB_URL = "postgresql+psycopg2://airflow:airflow@localhost:5432/air
 @click.group()
 @click.version_option(version=__version__)
 def cli():
-    """Build reproducibility packages from Airflow DAG runs."""
     pass
 
 
@@ -58,9 +53,6 @@ def capture(
     output_dir: str,
     include_data: tuple,
 ):
-    """
-    Capture one DAG run and write a package for it.
-    """
     click.echo(" Capturing Airflow DAG execution...")
     click.echo(f"   DAG ID: {dag_id}")
 
@@ -99,7 +91,15 @@ def capture(
             click.echo(" Metadata captured")
 
             data_files = [Path(f) for f in include_data] if include_data else None
-            dag_source_file = _find_dag_source_file(dag_id, captured_data_dir)
+            dag_source_file = _find_dag_source_file(
+                dag_id,
+                captured_data_dir,
+                metadata,
+            )
+            metadata["task_dependencies"] = _extract_task_dependencies(
+                dag_id,
+                dag_source_file,
+            )
             dag_files = [dag_source_file] if dag_source_file else None
             logs_dir = _find_logs_dir(dag_id, run_id)
 
@@ -109,6 +109,8 @@ def capture(
                 click.echo("   DAG source: not found locally; continuing with database metadata only")
             if logs_dir:
                 click.echo(f"   Airflow logs: {logs_dir}")
+            if metadata["task_dependencies"]:
+                click.echo(f"   Task dependencies: {len(metadata['task_dependencies'])}")
 
             with tempfile.TemporaryDirectory(prefix="airflow-rocrate-") as rocrate_tmp:
                 click.echo("\n  Generating RO-Crate metadata...")
@@ -137,6 +139,7 @@ def capture(
                 )
 
         click.echo(f"✓ Package created: {package_path}")
+        # print("tar check yay", package_path)
         click.echo("\n Success! Reproducibility package ready:")
         click.echo(f"    {package_path}")
         click.echo("\n   To inspect it:")
@@ -163,7 +166,6 @@ def capture(
     help="Airflow metadata database URL",
 )
 def list_runs(dag_id: str, db_url: Optional[str]):
-    """List recent runs for one DAG."""
     click.echo(f" Listing runs for DAG: {dag_id}")
 
     db_url = _resolve_db_url(db_url)
@@ -199,7 +201,6 @@ def list_runs(dag_id: str, db_url: Optional[str]):
 
 @cli.command()
 def info():
-    """Show a short summary of the tool."""
     click.echo(f"""
 ╔═══════════════════════════════════════════════════════════╗
 ║      Airflow RO-Crate Reproducibility Package             ║
@@ -248,12 +249,16 @@ Database URL Resolution
 """)
 
 
-def _find_dag_source_file(dag_id: str, captured_data_dir: Path) -> Optional[Path]:
-    """Find the DAG file that should go into the package."""
+def _find_dag_source_file(
+    dag_id: str,
+    captured_data_dir: Path,
+    metadata: Optional[dict[str, Any]] = None,
+) -> Optional[Path]:
     candidates = [
         captured_data_dir / f"{dag_id}_source.py",
-        Path.cwd() / "dags" / f"{dag_id}.py",
     ]
+    candidates.extend(_dag_source_candidates_from_metadata(metadata))
+    candidates.append(Path.cwd() / "dags" / f"{dag_id}.py")
 
     airflow_home = os.getenv("AIRFLOW_HOME")
     if airflow_home:
@@ -266,8 +271,55 @@ def _find_dag_source_file(dag_id: str, captured_data_dir: Path) -> Optional[Path
     return None
 
 
+def _dag_source_candidates_from_metadata(
+    metadata: Optional[dict[str, Any]],
+) -> list[Path]:
+    if not metadata:
+        return []
+
+    dag_info = metadata.get("dag_info") or {}
+    candidates = []
+
+    fileloc = dag_info.get("fileloc")
+    if fileloc:
+        fileloc_path = Path(fileloc)
+        candidates.append(fileloc_path)
+        candidates.extend(_container_dags_path_candidates(fileloc_path))
+
+    relative_fileloc = dag_info.get("relative_fileloc")
+    if relative_fileloc:
+        relative_path = Path(relative_fileloc)
+        candidates.append(Path.cwd() / "dags" / relative_path)
+
+    return candidates
+
+
+def _container_dags_path_candidates(path: Path) -> list[Path]:
+    parts = path.parts
+    if "dags" not in parts:
+        return []
+
+    dags_index = parts.index("dags")
+    relative_parts = parts[dags_index + 1:]
+    if not relative_parts:
+        return []
+
+    return [Path.cwd() / "dags" / Path(*relative_parts)]
+
+
+def _extract_task_dependencies(
+    dag_id: str,
+    dag_source_file: Optional[Path],
+) -> list[dict[str, str]]:
+    if not dag_source_file:
+        return []
+
+    from airflow_rocrate.metadata import extract_task_dependencies_from_dag_file
+
+    return extract_task_dependencies_from_dag_file(dag_id, dag_source_file)
+
+
 def _find_logs_dir(dag_id: str, run_id: str) -> Optional[Path]:
-    """Find task logs when Airflow logs are available on disk."""
     candidates = [
         Path.cwd() / "logs" / f"dag_id={dag_id}" / f"run_id={run_id}",
         Path.cwd() / "logs" / dag_id / run_id,
@@ -285,7 +337,6 @@ def _find_logs_dir(dag_id: str, run_id: str) -> Optional[Path]:
 
 
 def _resolve_db_url(db_url: Optional[str]) -> str:
-    """Choose the Airflow database URL."""
     if db_url:
         return db_url
 
@@ -303,7 +354,6 @@ def _resolve_db_url(db_url: Optional[str]) -> str:
 
 
 def _airflow_config_db_url() -> Optional[str]:
-    """Read the database URL from the local Airflow config if possible."""
     try:
         completed = subprocess.run(
             ["airflow", "config", "get-value", "database", "sql_alchemy_conn"],
@@ -327,7 +377,6 @@ def _airflow_config_db_url() -> Optional[str]:
 
 
 def _latest_run_id(capture: Any, dag_id: str) -> str:
-    """Pick the latest successful run, or the newest run when none succeeded."""
     runs = capture.get_dag_runs(dag_id, limit=20)
     if not runs:
         raise click.ClickException(
@@ -347,7 +396,6 @@ def _latest_run_id(capture: Any, dag_id: str) -> str:
 
 
 def main():
-    """Run the command line interface."""
     cli()
 
 

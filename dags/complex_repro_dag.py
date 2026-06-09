@@ -1,11 +1,3 @@
-"""
-Example DAG for testing Airflow RO-Crate capture.
-
-It prepares workflow parameters, records an external data reference through XCom,
-then prints a small summary. The default reference looks like S3, but the same
-shape can describe HTTP APIs, object stores, data catalogues, or another service.
-"""
-
 from __future__ import annotations
 
 import os
@@ -18,7 +10,6 @@ from airflow.providers.standard.operators.python import PythonOperator
 
 
 def d1_prepare_parameters(**context: Any) -> dict[str, Any]:
-    """Create run parameters that matter for reproducibility."""
     logical_date = context["logical_date"].isoformat()
     external_uri = os.getenv(
         "AIRFLOW_ROCRATE_EXTERNAL_URI",
@@ -37,7 +28,6 @@ def d1_prepare_parameters(**context: Any) -> dict[str, Any]:
 
 
 def d2_record_external_reference(**context: Any) -> dict[str, Any]:
-    """Record provenance for an external input or reference."""
     task_instance = context["ti"]
     run_context = task_instance.xcom_pull(task_ids="d1_prepare_parameters") or {}
 

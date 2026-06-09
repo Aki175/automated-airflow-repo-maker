@@ -1,7 +1,3 @@
-"""
-Build RO-Crate metadata for captured Airflow DAG runs.
-"""
-
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -12,10 +8,7 @@ from rocrate.model.contextentity import ContextEntity
 
 
 class RocrateCrateGenerator:
-    """Turn captured Airflow metadata into an RO-Crate."""
-
     def __init__(self, output_dir: Path):
-        """Set up the folder where the crate will be written."""
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -27,7 +20,6 @@ class RocrateCrateGenerator:
         dag_files: List[Path] = None,
         data_files: List[Path] = None,
     ) -> Path:
-        """Create an RO-Crate from one captured DAG run."""
         crate = ROCrate()
 
         dag_info = metadata.get("dag_info", {})
@@ -73,7 +65,17 @@ class RocrateCrateGenerator:
 
         self._add_execution_activity(crate, dag_id, run_id, metadata, airflow_id)
 
-        self._add_task_information(crate, metadata.get("task_instances", []))
+        task_entities = self._add_task_information(
+            crate,
+            metadata.get("task_instances", []),
+            metadata.get("task_dependencies", []),
+        )
+
+        self._add_task_dependencies(
+            crate,
+            metadata.get("task_dependencies", []),
+            task_entities,
+        )
 
         self._add_xcom_information(crate, metadata.get("xcom_data", {}))
 
@@ -98,7 +100,6 @@ class RocrateCrateGenerator:
         metadata: Dict[str, Any],
         person_id: str,
     ):
-        """Add the DAG as the workflow being described."""
         dag_info = metadata.get("dag_info", {})
 
         workflow_id = f"#{dag_id}"
@@ -130,31 +131,50 @@ class RocrateCrateGenerator:
         metadata: Dict[str, Any],
         airflow_id: str,
     ):
-        """Add the activity that represents the DAG run."""
         capture_time = metadata["capture_timestamp"]
+        dag_run = metadata.get("dag_run", {})
+        start_time = dag_run.get("start_date") or capture_time
+        end_time = dag_run.get("end_date") or start_time
 
         activity_id = f"#execution_{self._safe_identifier(run_id)}"
-        activity = ContextEntity(
-            crate,
-            activity_id,
-            properties={
-                "@type": "Action",
-                "name": f"Execution of {dag_id}",
-                "description": f"Airflow DAG execution {run_id}",
-                "object": {"@id": f"#{dag_id}"},
-                "startTime": capture_time,
-                "endTime": capture_time,
-                "agent": {"@id": airflow_id},
-            },
-        )
+        activity_properties = {
+            "@type": "Action",
+            "name": f"Execution of {dag_id}",
+            "description": f"Airflow DAG execution {run_id}",
+            "object": {"@id": f"#{dag_id}"},
+            "startTime": start_time,
+            "endTime": end_time,
+            "agent": {"@id": airflow_id},
+            "airflowCaptureTime": capture_time,
+            "airflowRunId": run_id,
+        }
+
+        if dag_run.get("state"):
+            activity_properties["actionStatus"] = dag_run["state"]
+        if dag_run.get("logical_date"):
+            activity_properties["airflowLogicalDate"] = dag_run["logical_date"]
+        if dag_run.get("duration_seconds") is not None:
+            activity_properties["airflowDurationSeconds"] = dag_run[
+                "duration_seconds"
+            ]
+        if dag_run.get("run_type"):
+            activity_properties["airflowRunType"] = dag_run["run_type"]
+
+        activity = ContextEntity(crate, activity_id, properties=activity_properties)
 
         crate.add(activity)
         crate.root_dataset["result"] = {"@id": activity_id}
 
-    def _add_task_information(self, crate: ROCrate, task_instances: List[Dict[str, Any]]):
-        """Add task run details and detect overlapping task times."""
+    def _add_task_information(
+        self,
+        crate: ROCrate,
+        task_instances: List[Dict[str, Any]],
+        dependencies: List[Dict[str, str]],
+    ) -> Dict[str, tuple[str, ContextEntity]]:
         task_entities = []
-        for idx, task in enumerate(task_instances):
+        task_entity_index = {}
+        ordered_tasks = self._ordered_task_instances(task_instances, dependencies)
+        for idx, task in enumerate(ordered_tasks):
             task_id = f"#task_{idx}_{self._safe_identifier(task['task_id'])}"
             duration = task.get("duration_seconds") or 0
             task_properties = {
@@ -185,17 +205,118 @@ class RocrateCrateGenerator:
             )
             crate.add(task_entity)
             task_entities.append((task_id, task_entity, task))
+            task_entity_index[task["task_id"]] = (task_id, task_entity)
 
             self._append_root_reference(crate, "step", task_id)
 
         self._add_parallel_execution_information(crate, task_entities)
+        return task_entity_index
+
+    def _add_task_dependencies(
+        self,
+        crate: ROCrate,
+        dependencies: List[Dict[str, str]],
+        task_entities: Dict[str, tuple[str, ContextEntity]],
+    ):
+        dependency_references = []
+
+        for idx, dependency in enumerate(dependencies):
+            # print("edge thing", dependency)
+            upstream_task_id = dependency.get("upstream_task_id")
+            downstream_task_id = dependency.get("downstream_task_id")
+            if not upstream_task_id or not downstream_task_id:
+                continue
+            if upstream_task_id not in task_entities or downstream_task_id not in task_entities:
+                continue
+
+            upstream_entity_id, upstream_entity = task_entities[upstream_task_id]
+            downstream_entity_id, downstream_entity = task_entities[downstream_task_id]
+            dependency_id = (
+                f"#dependency_{idx}_"
+                f"{self._safe_identifier(upstream_task_id)}_to_"
+                f"{self._safe_identifier(downstream_task_id)}"
+            )
+            dependency_entity = ContextEntity(
+                crate,
+                dependency_id,
+                properties={
+                    "@type": "Relationship",
+                    "additionalType": "airflow:TaskDependency",
+                    "name": f"{upstream_task_id} -> {downstream_task_id}",
+                    "description": (
+                        "Airflow DAG dependency edge from upstream task "
+                        "to downstream task."
+                    ),
+                    "source": {"@id": upstream_entity_id},
+                    "target": {"@id": downstream_entity_id},
+                    "upstreamTask": {"@id": upstream_entity_id},
+                    "downstreamTask": {"@id": downstream_entity_id},
+                },
+            )
+            crate.add(dependency_entity)
+            dependency_references.append({"@id": dependency_id})
+            self._append_entity_reference(
+                upstream_entity,
+                "airflowDownstreamTask",
+                downstream_entity_id,
+            )
+            self._append_entity_reference(
+                downstream_entity,
+                "airflowUpstreamTask",
+                upstream_entity_id,
+            )
+            self._append_root_reference(crate, "mentions", dependency_id)
+
+        if dependency_references:
+            crate.root_dataset["airflowTaskDependency"] = dependency_references
+
+    def _ordered_task_instances(
+        self,
+        task_instances: List[Dict[str, Any]],
+        dependencies: List[Dict[str, str]],
+    ) -> List[Dict[str, Any]]:
+        if not dependencies:
+            return task_instances
+
+        task_by_id = {task["task_id"]: task for task in task_instances}
+        indegree = {task_id: 0 for task_id in task_by_id}
+        downstreams = {task_id: set() for task_id in task_by_id}
+
+        for dependency in dependencies:
+            upstream = dependency.get("upstream_task_id")
+            downstream = dependency.get("downstream_task_id")
+            if upstream not in task_by_id or downstream not in task_by_id:
+                continue
+            if downstream in downstreams[upstream]:
+                continue
+            downstreams[upstream].add(downstream)
+            indegree[downstream] += 1
+
+        if all(degree == 0 for degree in indegree.values()):
+            return task_instances
+
+        ready = sorted(task_id for task_id, degree in indegree.items() if degree == 0)
+        ordered_ids = []
+
+        while ready:
+            task_id = ready.pop(0)
+            ordered_ids.append(task_id)
+            for downstream in sorted(downstreams[task_id]):
+                indegree[downstream] -= 1
+                if indegree[downstream] == 0:
+                    ready.append(downstream)
+                    ready.sort()
+
+        if len(ordered_ids) != len(task_by_id):
+            return task_instances
+
+        return [task_by_id[task_id] for task_id in ordered_ids]
 
     def _add_parallel_execution_information(
         self,
         crate: ROCrate,
         task_entities: List[tuple[str, ContextEntity, Dict[str, Any]]],
     ):
-        """Record tasks that ran at the same time."""
         parallel_overlaps = []
 
         for left_index, (left_id, left_entity, left_task) in enumerate(task_entities):
@@ -254,7 +375,6 @@ class RocrateCrateGenerator:
                 self._append_root_reference(crate, "mentions", overlap["@id"])
 
     def _add_xcom_information(self, crate: ROCrate, xcom_data: Dict[str, Any]):
-        """Add XCom values produced during the run."""
         if not xcom_data:
             return
 
@@ -287,7 +407,6 @@ class RocrateCrateGenerator:
         key: str,
         value: Any,
     ) -> Optional[str]:
-        """Turn structured XCom provenance into linked crate entities."""
         if not isinstance(value, dict):
             return None
 
@@ -363,7 +482,6 @@ class RocrateCrateGenerator:
         return reference_id
 
     def _add_file_to_crate(self, crate: ROCrate, file_path: Path, file_type: str = "data"):
-        """Copy a file into the crate."""
         try:
             if file_type == "dag_source":
                 dest_path = f"workflow/dags/{file_path.name}"
@@ -376,16 +494,13 @@ class RocrateCrateGenerator:
             print(f"Warning: Could not add file {file_path} to crate: {e}")
 
     def _person_id(self, owner: str) -> str:
-        """Create a stable local person ID."""
         owner = owner or "Unknown"
         return f"#person_{self._safe_identifier(owner)}"
 
     def _safe_identifier(self, value: str) -> str:
-        """Convert a value into a simple ID fragment."""
         return "".join(ch if ch.isalnum() else "_" for ch in str(value)).strip("_") or "unknown"
 
     def _json_safe_value(self, value: Any) -> Any:
-        """Convert a value into something JSON can store."""
         if isinstance(value, (str, int, float, bool)) or value is None:
             return value
 
@@ -395,7 +510,6 @@ class RocrateCrateGenerator:
             return str(value)
 
     def _structured_xcom_value(self, value: Any) -> Any:
-        """Decode XCom strings that contain JSON."""
         if not isinstance(value, str):
             return value
 
@@ -423,7 +537,6 @@ class RocrateCrateGenerator:
         property_name: str,
         target_id: str,
     ):
-        """Add a linked entity ID to an entity property."""
         existing = entity.get(property_name)
         reference = {"@id": target_id}
         if existing is None:
@@ -439,7 +552,6 @@ class RocrateCrateGenerator:
         property_name: str,
         target_id: str,
     ):
-        """Add a linked entity ID to the root dataset."""
         existing = crate.root_dataset.get(property_name)
         reference = {"@id": target_id}
 
@@ -458,7 +570,6 @@ class RocrateCrateGenerator:
         crate.root_dataset[property_name] = references
 
     def _entity_reference(self, value: Any) -> Dict[str, str]:
-        """Convert different reference shapes into an @id dictionary."""
         if isinstance(value, dict) and "@id" in value:
             return {"@id": str(value["@id"])}
 
@@ -469,7 +580,6 @@ class RocrateCrateGenerator:
         return {"@id": str(value)}
 
     def _without_empty_values(self, properties: Dict[str, Any]) -> Dict[str, Any]:
-        """Remove empty values and make nested values JSON safe."""
         cleaned = {}
         for key, value in properties.items():
             if value is None or value == "":
@@ -486,7 +596,6 @@ class RocrateCrateGenerator:
         reference_id: str,
         value: Dict[str, Any],
     ) -> List[Dict[str, str]]:
-        """Keep extra XCom fields as linked property values."""
         core_keys = {
             "name",
             "description",
@@ -530,7 +639,6 @@ class RocrateCrateGenerator:
         return additional_properties
 
     def _first_present(self, value: Dict[str, Any], *keys: str) -> Any:
-        """Return the first non empty value for these keys."""
         for key in keys:
             candidate = value.get(key)
             if candidate is not None and candidate != "":

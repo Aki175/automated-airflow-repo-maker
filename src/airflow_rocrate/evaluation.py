@@ -1,7 +1,3 @@
-"""
-Calculate capture coverage for generated Airflow reproducibility packages.
-"""
-
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
@@ -17,8 +13,6 @@ CATEGORY_SCORES = {
 
 @dataclass(frozen=True)
 class CoverageItem:
-    """One evidence item used in the coverage calculation."""
-
     name: str
     category: str
     captured: bool
@@ -40,16 +34,18 @@ def build_coverage_report(
     metadata: Dict[str, Any],
     data_files: Optional[Iterable[Path]] = None,
 ) -> Dict[str, Any]:
-    """Build the coverage report for one generated package."""
     package_dir = Path(package_dir)
     planned_data_files = list(data_files or [])
+    dag_run = metadata.get("dag_run") or {}
 
     items = [
         _coverage_item(
             "dag_run_metadata",
             "automatic",
-            _has_text(metadata.get("dag_id")) and _has_text(metadata.get("run_id")),
-            "DAG ID and run ID were captured from the Airflow run metadata.",
+            _has_text(dag_run.get("run_id"))
+            and _has_text(dag_run.get("state"))
+            and _has_text(dag_run.get("start_date")),
+            "Run ID, state and timing were captured from the Airflow DagRun record.",
         ),
         _coverage_item(
             "task_instance_metadata",
@@ -109,7 +105,6 @@ def build_coverage_report(
 
 
 def coverage_report(items: Iterable[CoverageItem]) -> Dict[str, Any]:
-    """Apply Coverage = sum(scores) / n to a set of coverage items."""
     item_list = list(items)
     total_items = len(item_list)
     total_score = sum(item.score for item in item_list)
